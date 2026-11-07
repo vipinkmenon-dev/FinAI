@@ -1,69 +1,62 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, AlertCircle, PlusCircle } from 'lucide-react';
+import { X, AlertCircle } from 'lucide-react';
 import { useCurrency } from '../context/CurrencyContext';
 
-const DEFAULT_EXPENSE_CATS = [
-  'Housing', 'Food & Dining', 'Groceries', 'Utilities',
-  'Transportation', 'Entertainment', 'Shopping', 'Healthcare',
-  'Subscriptions', 'Education', 'Travel', 'Personal Care', 'Miscellaneous'
+const INCOME_CATEGORIES = [
+  'Salary', 'Freelancing', 'Business', 'Investments', 'Other income'
 ];
 
-const DEFAULT_INCOME_CATS = [
-  'Salary', 'Freelance', 'Investment Returns', 'Bonus',
-  'Rental Income', 'Business', 'Gifts', 'Other'
+const EXPENSE_CATEGORIES = [
+  'Food', 'Transportation', 'Shopping', 'Education',
+  'Healthcare', 'Bills', 'Entertainment', 'Groceries',
+  'Rent', 'Other expenses'
 ];
 
 const PAYMENT_METHODS = [
-  'UPI / Net Banking', 'Credit Card', 'Debit Card', 'Cash', 'Bank Transfer', 'Digital Wallet'
+  'UPI / Net Banking', 'Credit Card', 'Debit Card', 'Cash', 'Bank Transfer'
 ];
 
 export const TransactionModal = ({
   isOpen,
   onClose,
   onSubmit,
-  initialData = null,
-  availableCategories = null
+  initialData = null
 }) => {
   const { currency } = useCurrency();
   const [type, setType] = useState('expense');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('Food & Dining');
-  const [paymentMethod, setPaymentMethod] = useState('UPI / Net Banking');
+  const [title, setTitle] = useState('');
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
-  const [customCategory, setCustomCategory] = useState('');
-  const [isCustomCat, setIsCustomCat] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (initialData) {
-      setType(initialData.type || 'expense');
+      setType(initialData.transaction_type || initialData.type || 'expense');
       setAmount(initialData.amount ? String(initialData.amount) : '');
-      setCategory(initialData.category || 'Food & Dining');
-      setPaymentMethod(initialData.payment_method || 'UPI / Net Banking');
-      setDate(initialData.date || new Date().toISOString().split('T')[0]);
+      setTitle(initialData.description || '');
+      setCategory(initialData.category || EXPENSE_CATEGORIES[0]);
+      setPaymentMethod(initialData.payment_method || PAYMENT_METHODS[0]);
+      setDate(initialData.transaction_date || initialData.date || new Date().toISOString().split('T')[0]);
       setDescription(initialData.description || '');
-      setIsCustomCat(false);
-      setCustomCategory('');
     } else {
       setType('expense');
       setAmount('');
-      setCategory('Food & Dining');
-      setPaymentMethod('UPI / Net Banking');
+      setTitle('');
+      setCategory(EXPENSE_CATEGORIES[0]);
+      setPaymentMethod(PAYMENT_METHODS[0]);
       setDate(new Date().toISOString().split('T')[0]);
       setDescription('');
-      setIsCustomCat(false);
-      setCustomCategory('');
     }
     setError('');
   }, [initialData, isOpen]);
 
   if (!isOpen) return null;
 
-  const currentCategoryList = type === 'expense'
-    ? (availableCategories?.expense_categories || DEFAULT_EXPENSE_CATS)
-    : (availableCategories?.income_categories || DEFAULT_INCOME_CATS);
+  const currentCategories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -75,77 +68,78 @@ export const TransactionModal = ({
       return;
     }
 
-    const finalCategory = isCustomCat ? customCategory.trim() : category;
-    if (!finalCategory) {
-      setError('Please specify a category.');
+    if (!category) {
+      setError('Please select a category.');
       return;
     }
 
     if (!date) {
-      setError('Please select a valid date.');
+      setError('Please select a valid transaction date.');
       return;
     }
 
     setLoading(true);
     try {
       await onSubmit({
-        type,
+        transaction_type: type,
+        type: type,
         amount: parsedAmount,
-        category: finalCategory,
+        category,
         payment_method: paymentMethod,
-        date,
-        description: description.trim()
+        transaction_date: date,
+        date: date,
+        description: (title || description || category).trim()
       });
       onClose();
     } catch (err) {
-      setError(err.message || 'Failed to save transaction');
+      setError(err.message || 'Failed to save transaction record.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg overflow-hidden rounded-3xl bg-navy-900 border border-slate-700/80 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="relative w-full max-w-lg rounded-2xl bg-white border border-neutral-200 shadow-modal overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-800">
+        <div className="flex items-center justify-between p-6 border-b border-neutral-100">
           <div>
-            <h3 className="text-xl font-bold text-white">
+            <h3 className="text-lg font-bold text-neutral-950">
               {initialData ? 'Edit Transaction' : 'Record Transaction'}
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Keep your ledger balanced and financial insights updated
+            <p className="text-xs text-neutral-500 mt-0.5">
+              Personal finance ledger entry
             </p>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800"
+            className="p-1.5 text-neutral-400 hover:text-black rounded-lg hover:bg-neutral-100"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && (
-            <div className="flex items-center gap-2 p-3 text-xs font-medium text-rose-300 bg-rose-950/40 border border-rose-500/40 rounded-xl">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+            <div className="flex items-center gap-2 p-3 text-xs font-semibold text-neutral-900 bg-neutral-100 border border-neutral-300 rounded-lg">
+              <AlertCircle className="w-4 h-4 shrink-0 text-neutral-800" />
               <span>{error}</span>
             </div>
           )}
 
-          {/* Type Selector (Income vs Expense) */}
-          <div className="grid grid-cols-2 gap-3 p-1 rounded-2xl bg-navy-950 border border-slate-800">
+          {/* Type Toggle: Expense vs Income (Monochrome) */}
+          <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-neutral-100 border border-neutral-200">
             <button
               type="button"
               onClick={() => {
                 setType('expense');
-                setCategory('Food & Dining');
+                setCategory(EXPENSE_CATEGORIES[0]);
               }}
-              className={`py-2.5 text-xs font-bold rounded-xl transition-all ${
+              className={`py-2 text-xs font-bold rounded-lg transition-all ${
                 type === 'expense'
-                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-black text-white shadow-subtle'
+                  : 'text-neutral-600 hover:text-black'
               }`}
             >
               Expense (-)
@@ -154,25 +148,40 @@ export const TransactionModal = ({
               type="button"
               onClick={() => {
                 setType('income');
-                setCategory('Salary');
+                setCategory(INCOME_CATEGORIES[0]);
               }}
-              className={`py-2.5 text-xs font-bold rounded-xl transition-all ${
+              className={`py-2 text-xs font-bold rounded-lg transition-all ${
                 type === 'income'
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-black text-white shadow-subtle'
+                  : 'text-neutral-600 hover:text-black'
               }`}
             >
               Income (+)
             </button>
           </div>
 
-          {/* Amount Input */}
+          {/* Title / Description */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-              Amount
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
+              Transaction Title
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Monthly Salary, Grocery run, Rent payment"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-white border border-neutral-300 rounded-lg text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
+            />
+          </div>
+
+          {/* Amount */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
+              Amount ({currency})
             </label>
             <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-neutral-400">
                 {currency}
               </span>
               <input
@@ -183,58 +192,38 @@ export const TransactionModal = ({
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
-                className="w-full pl-10 pr-4 py-3 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-lg font-bold placeholder-slate-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                className="w-full pl-8 pr-4 py-2.5 bg-white border border-neutral-300 rounded-lg text-base font-bold text-neutral-900 placeholder-neutral-300 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
               />
             </div>
           </div>
 
           {/* Category & Payment Method */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                  Category
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setIsCustomCat(!isCustomCat)}
-                  className="text-[11px] text-brand-400 hover:underline"
-                >
-                  {isCustomCat ? 'Choose standard' : '+ Custom'}
-                </button>
-              </div>
-
-              {isCustomCat ? (
-                <input
-                  type="text"
-                  placeholder="e.g. Gym, Pet Care"
-                  value={customCategory}
-                  onChange={(e) => setCustomCategory(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:border-brand-500"
-                />
-              ) : (
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500"
-                >
-                  {currentCategoryList.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
+                Category
+              </label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full px-3 py-2.5 bg-white border border-neutral-300 rounded-lg text-xs font-medium text-neutral-900 focus:outline-none focus:border-black"
+              >
+                {currentCategories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
                 Payment Method
               </label>
               <select
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500"
+                className="w-full px-3 py-2.5 bg-white border border-neutral-300 rounded-lg text-xs font-medium text-neutral-900 focus:outline-none focus:border-black"
               >
                 {PAYMENT_METHODS.map((pm) => (
                   <option key={pm} value={pm}>
@@ -245,50 +234,35 @@ export const TransactionModal = ({
             </div>
           </div>
 
-          {/* Date & Description */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                Date
-              </label>
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                Note / Description
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Dinner with team"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:border-brand-500"
-              />
-            </div>
+          {/* Date */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
+              Transaction Date
+            </label>
+            <input
+              type="date"
+              required
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-white border border-neutral-300 rounded-lg text-xs font-medium text-neutral-900 focus:outline-none focus:border-black"
+            />
           </div>
 
           {/* Submit Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+          <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-neutral-100">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 text-xs font-semibold text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+              className="px-4 py-2 text-xs font-semibold text-neutral-600 hover:text-black hover:bg-neutral-100 rounded-lg transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-6 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-brand-500/25 transition-all disabled:opacity-50"
+              className="px-5 py-2 text-xs font-bold bg-black text-white rounded-lg hover:bg-neutral-800 transition-all disabled:opacity-50"
             >
-              {loading ? 'Saving...' : initialData ? 'Update Transaction' : 'Save Transaction'}
+              {loading ? 'Saving...' : initialData ? 'Update Record' : 'Save Transaction'}
             </button>
           </div>
         </form>

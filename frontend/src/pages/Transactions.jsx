@@ -1,68 +1,53 @@
 import React, { useState, useEffect } from 'react';
 import {
   Search,
-  Filter,
   Plus,
-  ArrowUpRight,
-  ArrowDownRight,
-  Edit2,
-  Trash2,
   Download,
   Calendar,
-  Layers,
   CreditCard,
-  RotateCcw
+  Edit2,
+  Trash2,
+  ArrowUpDown,
+  RotateCcw,
+  Layers
 } from 'lucide-react';
 import { useCurrency } from '../context/CurrencyContext';
 import { api } from '../services/api';
 
-export const Transactions = ({
-  onOpenAddModal,
-  onOpenEditModal,
-  refreshTrigger,
-  onTransactionUpdated
-}) => {
+const ALL_CATEGORIES = [
+  'Salary', 'Freelancing', 'Business', 'Investments', 'Other income',
+  'Food', 'Transportation', 'Shopping', 'Education', 'Healthcare',
+  'Bills', 'Entertainment', 'Groceries', 'Rent', 'Other expenses'
+];
+
+const PAYMENT_METHODS = [
+  'UPI / Net Banking', 'Credit Card', 'Debit Card', 'Cash', 'Bank Transfer'
+];
+
+export const Transactions = ({ onOpenAddModal, onOpenEditModal, refreshTrigger, onTransactionUpdated }) => {
   const { formatMoney } = useCurrency();
 
   const [transactions, setTransactions] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // Filters
+  // Filters & Sorting
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [sortBy, setSortBy] = useState('date');
+  const [order, setOrder] = useState('desc');
 
-  // Meta
-  const [meta, setMeta] = useState({
-    expense_categories: [],
-    income_categories: [],
-    payment_methods: []
-  });
-
-  // Delete state
+  // Deletion modal
   const [deleteId, setDeleteId] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    loadMeta();
-  }, []);
-
-  useEffect(() => {
     loadTransactions();
-  }, [search, typeFilter, categoryFilter, paymentFilter, startDate, endDate, refreshTrigger]);
-
-  const loadMeta = async () => {
-    try {
-      const res = await api.getMeta();
-      setMeta(res);
-    } catch (err) {
-      console.error('Failed to load categories/payment methods:', err);
-    }
-  };
+  }, [search, typeFilter, categoryFilter, paymentFilter, startDate, endDate, sortBy, order, refreshTrigger]);
 
   const loadTransactions = async () => {
     setLoading(true);
@@ -74,6 +59,8 @@ export const Transactions = ({
       if (paymentFilter) params.payment_method = paymentFilter;
       if (startDate) params.start_date = startDate;
       if (endDate) params.end_date = endDate;
+      params.sort_by = sortBy;
+      params.order = order;
 
       const res = await api.getTransactions(params);
       setTransactions(res.transactions || []);
@@ -85,13 +72,15 @@ export const Transactions = ({
     }
   };
 
-  const resetFilters = () => {
+  const handleResetFilters = () => {
     setSearch('');
     setTypeFilter('');
     setCategoryFilter('');
     setPaymentFilter('');
     setStartDate('');
     setEndDate('');
+    setSortBy('date');
+    setOrder('desc');
   };
 
   const handleDelete = async (id) => {
@@ -102,7 +91,7 @@ export const Transactions = ({
       loadTransactions();
       if (onTransactionUpdated) onTransactionUpdated();
     } catch (err) {
-      alert(err.message || 'Failed to delete transaction');
+      alert(err.message || 'Failed to delete transaction.');
     } finally {
       setDeleting(false);
     }
@@ -111,161 +100,134 @@ export const Transactions = ({
   const exportCSV = () => {
     if (!transactions.length) return;
     const headers = ['ID', 'Date', 'Type', 'Category', 'Payment Method', 'Description', 'Amount'];
-    const rows = transactions.map(t => [
+    const rows = transactions.map((t) => [
       t.id,
-      t.date,
-      t.type,
+      t.transaction_date || t.date,
+      t.transaction_type || t.type,
       `"${t.category}"`,
       `"${t.payment_method}"`,
-      `"${t.description.replace(/"/g, '""')}"`,
+      `"${(t.description || '').replace(/"/g, '""')}"`,
       t.amount
     ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `FinAI_Transactions_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `FinAI_Ledger_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Calculations for filtered items
-  const filteredIncome = transactions
-    .filter(t => t.type === 'income')
-    .reduce((acc, curr) => acc + curr.amount, 0);
-
-  const filteredExpense = transactions
-    .filter(t => t.type === 'expense')
-    .reduce((acc, curr) => acc + curr.amount, 0);
-
-  const filteredNet = filteredIncome - filteredExpense;
-
-  const allCategories = Array.from(new Set([
-    ...meta.expense_categories,
-    ...meta.income_categories
-  ]));
-
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Top Banner & Quick Metrics for Filtered Set */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="p-4 rounded-2xl bg-navy-900/80 border border-slate-800">
-          <p className="text-[11px] font-semibold uppercase text-slate-400">Ledger Entries</p>
-          <p className="text-xl font-bold text-white mt-1">{totalCount} Transactions</p>
-        </div>
-        <div className="p-4 rounded-2xl bg-navy-900/80 border border-emerald-500/20">
-          <p className="text-[11px] font-semibold uppercase text-emerald-400">Total Filtered Inflow</p>
-          <p className="text-xl font-bold text-emerald-400 mt-1">+{formatMoney(filteredIncome)}</p>
-        </div>
-        <div className="p-4 rounded-2xl bg-navy-900/80 border border-rose-500/20">
-          <p className="text-[11px] font-semibold uppercase text-rose-400">Total Filtered Outflow</p>
-          <p className="text-xl font-bold text-rose-400 mt-1">-{formatMoney(filteredExpense)}</p>
-        </div>
-        <div className="p-4 rounded-2xl bg-navy-900/80 border border-brand-500/20">
-          <p className="text-[11px] font-semibold uppercase text-brand-300">Net Ledger Cashflow</p>
-          <p className={`text-xl font-bold mt-1 ${filteredNet >= 0 ? 'text-white' : 'text-rose-400'}`}>
-            {formatMoney(filteredNet)}
+    <div className="space-y-6 animate-in fade-in duration-200">
+      {/* Header & Primary Controls */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-neutral-200 shadow-subtle">
+        <div>
+          <h3 className="text-xl font-bold text-neutral-950">Transaction Management</h3>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            View, filter, sort, and export your personal income and expense records
           </p>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={exportCSV}
+            disabled={transactions.length === 0}
+            className="px-3.5 py-2 text-xs font-semibold text-neutral-700 bg-white hover:bg-neutral-50 border border-neutral-300 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-40"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
+          </button>
+          <button
+            onClick={onOpenAddModal}
+            className="px-4 py-2 text-xs font-bold text-white bg-black hover:bg-neutral-800 rounded-lg shadow-subtle flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Record Transaction</span>
+          </button>
         </div>
       </div>
 
-      {/* Filter and Action Bar */}
-      <div className="p-5 rounded-3xl bg-navy-900/80 backdrop-blur-md border border-slate-800 shadow-xl space-y-4">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by description, note, or category..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-xs sm:text-sm placeholder-slate-500 focus:outline-none focus:border-brand-500"
-            />
-          </div>
-
-          {/* Action CTAs */}
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={exportCSV}
-              disabled={transactions.length === 0}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-slate-300 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 rounded-xl transition-colors disabled:opacity-40"
-              title="Export filtered records to CSV"
-            >
-              <Download className="w-4 h-4" />
-              <span>Export CSV</span>
-            </button>
-
-            <button
-              onClick={onOpenAddModal}
-              className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-brand-500/20 transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>New Entry</span>
-            </button>
-          </div>
+      {/* Filter and Sort Bar */}
+      <div className="p-4 rounded-xl bg-neutral-50 border border-neutral-200 space-y-3">
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+          <input
+            type="text"
+            placeholder="Search by title, description or category..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 bg-white border border-neutral-300 rounded-lg text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-black"
+          />
         </div>
 
-        {/* Detailed Filters Line */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-2 border-t border-slate-800/80">
-          {/* Type Filter */}
+        {/* Filter Dropdowns Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+          {/* Type */}
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="px-3 py-2 bg-navy-950 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:border-brand-500"
+            className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-neutral-800 focus:outline-none focus:border-black"
           >
-            <option value="">All Types (Income & Expense)</option>
+            <option value="">All Types</option>
             <option value="expense">Expenses Only</option>
             <option value="income">Income Only</option>
           </select>
 
-          {/* Category Filter */}
+          {/* Category */}
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-3 py-2 bg-navy-950 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:border-brand-500"
+            className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-neutral-800 focus:outline-none focus:border-black"
           >
             <option value="">All Categories</option>
-            {allCategories.map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {ALL_CATEGORIES.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
             ))}
           </select>
 
-          {/* Payment Method Filter */}
+          {/* Payment Method */}
           <select
             value={paymentFilter}
             onChange={(e) => setPaymentFilter(e.target.value)}
-            className="px-3 py-2 bg-navy-950 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:border-brand-500"
+            className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-neutral-800 focus:outline-none focus:border-black"
           >
-            <option value="">All Payment Methods</option>
-            {meta.payment_methods.map((p) => (
-              <option key={p} value={p}>{p}</option>
+            <option value="">All Methods</option>
+            {PAYMENT_METHODS.map((pm) => (
+              <option key={pm} value={pm}>
+                {pm}
+              </option>
             ))}
           </select>
 
-          {/* Start Date */}
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="px-3 py-2 bg-navy-950 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:border-brand-500"
-            title="Start Date"
-          />
+          {/* Sort Field */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-neutral-800 focus:outline-none focus:border-black"
+          >
+            <option value="date">Sort by Date</option>
+            <option value="amount">Sort by Amount</option>
+          </select>
 
-          {/* End Date */}
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="px-3 py-2 bg-navy-950 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:border-brand-500"
-            title="End Date"
-          />
+          {/* Order */}
+          <select
+            value={order}
+            onChange={(e) => setOrder(e.target.value)}
+            className="px-2.5 py-1.5 bg-white border border-neutral-300 rounded-lg text-neutral-800 focus:outline-none focus:border-black"
+          >
+            <option value="desc">Descending</option>
+            <option value="asc">Ascending</option>
+          </select>
 
           {/* Reset */}
           <button
-            onClick={resetFilters}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800/40 hover:bg-slate-800 border border-slate-700/60 rounded-xl transition-colors"
+            onClick={handleResetFilters}
+            className="px-3 py-1.5 bg-white border border-neutral-300 rounded-lg text-neutral-600 hover:text-black hover:bg-neutral-100 flex items-center justify-center gap-1 transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Reset</span>
@@ -273,23 +235,23 @@ export const Transactions = ({
         </div>
       </div>
 
-      {/* Transactions Ledger Table */}
-      <div className="overflow-hidden rounded-3xl bg-navy-900/80 backdrop-blur-md border border-slate-800 shadow-xl">
+      {/* Transactions Table / Empty State */}
+      <div className="rounded-xl bg-white border border-neutral-200 shadow-subtle overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-slate-400">
-            <div className="w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full animate-spin mr-3" />
-            <span className="text-sm font-medium">Filtering records...</span>
+          <div className="py-16 text-center text-xs text-neutral-500">
+            <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            Updating records...
           </div>
         ) : transactions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400">
-            <Layers className="w-12 h-12 text-slate-600 mb-3" />
-            <p className="text-base font-semibold text-slate-300">No transactions found</p>
-            <p className="text-xs text-slate-500 mt-1 max-w-sm">
-              Try adjusting your search query, clearing filters, or record a new transaction entry.
+          <div className="py-16 px-6 text-center space-y-3">
+            <Layers className="w-10 h-10 text-neutral-400 mx-auto" />
+            <h4 className="text-base font-bold text-neutral-900">No Transactions Found</h4>
+            <p className="text-xs text-neutral-500 max-w-sm mx-auto">
+              You haven't recorded any transactions matching your filters yet. Add an income or expense to begin.
             </p>
             <button
               onClick={onOpenAddModal}
-              className="mt-4 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-500 rounded-xl"
+              className="px-4 py-2 text-xs font-bold bg-black text-white rounded-lg hover:bg-neutral-800"
             >
               Add First Transaction
             </button>
@@ -298,99 +260,63 @@ export const Transactions = ({
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-slate-800 bg-navy-950/60 text-slate-400 uppercase text-[10px] font-bold tracking-wider">
-                  <th className="py-4 px-6">Description</th>
-                  <th className="py-4 px-4">Category</th>
-                  <th className="py-4 px-4">Payment Method</th>
-                  <th className="py-4 px-4">Date</th>
-                  <th className="py-4 px-4 text-right">Amount</th>
-                  <th className="py-4 px-6 text-center">Actions</th>
+                <tr className="border-b border-neutral-200 bg-neutral-50 text-neutral-500 uppercase text-[10px] font-bold">
+                  <th className="py-3 px-6">Title</th>
+                  <th className="py-3 px-4">Type</th>
+                  <th className="py-3 px-4">Category</th>
+                  <th className="py-3 px-4">Method</th>
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4 text-right">Amount</th>
+                  <th className="py-3 px-6 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {transactions.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-slate-800/40 transition-colors group">
-                    {/* Description & Type Icon */}
-                    <td className="py-4 px-6">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`flex items-center justify-center w-9 h-9 rounded-xl shrink-0 ${
-                            tx.type === 'income'
-                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+              <tbody className="divide-y divide-neutral-100">
+                {transactions.map((tx) => {
+                  const isIncome = tx.transaction_type === 'income' || tx.type === 'income';
+                  return (
+                    <tr key={tx.id} className="hover:bg-neutral-50 transition-colors">
+                      <td className="py-3 px-6 font-semibold text-neutral-950 max-w-[220px] truncate">
+                        {tx.description || tx.category}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                            isIncome
+                              ? 'bg-neutral-900 text-white'
+                              : 'bg-neutral-100 text-neutral-800 border border-neutral-300'
                           }`}
                         >
-                          {tx.type === 'income' ? (
-                            <ArrowUpRight className="w-4 h-4" />
-                          ) : (
-                            <ArrowDownRight className="w-4 h-4" />
-                          )}
+                          {isIncome ? 'Income' : 'Expense'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-neutral-700 font-medium">{tx.category}</td>
+                      <td className="py-3 px-4 text-neutral-500">{tx.payment_method}</td>
+                      <td className="py-3 px-4 text-neutral-500">{tx.transaction_date || tx.date}</td>
+                      <td className="py-3 px-4 text-right font-bold text-neutral-950">
+                        {isIncome ? '+' : '-'}
+                        {formatMoney(tx.amount)}
+                      </td>
+                      <td className="py-3 px-6 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => onOpenEditModal(tx)}
+                            title="Edit"
+                            className="p-1 text-neutral-500 hover:text-black rounded hover:bg-neutral-100"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteId(tx.id)}
+                            title="Delete"
+                            className="p-1 text-neutral-500 hover:text-black rounded hover:bg-neutral-100"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                        <div>
-                          <p className="font-bold text-white text-sm">
-                            {tx.description || tx.category}
-                          </p>
-                          <p className="text-[10px] text-slate-400 capitalize">
-                            {tx.type} transaction
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Category */}
-                    <td className="py-4 px-4">
-                      <span className="px-2.5 py-1 text-xs font-semibold text-brand-300 bg-brand-950/60 border border-brand-500/20 rounded-lg">
-                        {tx.category}
-                      </span>
-                    </td>
-
-                    {/* Payment Method */}
-                    <td className="py-4 px-4 text-slate-300 font-medium">
-                      <div className="flex items-center gap-1.5">
-                        <CreditCard className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{tx.payment_method}</span>
-                      </div>
-                    </td>
-
-                    {/* Date */}
-                    <td className="py-4 px-4 text-slate-400">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                        <span>{tx.date}</span>
-                      </div>
-                    </td>
-
-                    {/* Amount */}
-                    <td
-                      className={`py-4 px-4 text-right font-extrabold text-sm ${
-                        tx.type === 'income' ? 'text-emerald-400' : 'text-slate-200'
-                      }`}
-                    >
-                      {tx.type === 'income' ? '+' : '-'}
-                      {formatMoney(tx.amount)}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="py-4 px-6 text-center">
-                      <div className="flex items-center justify-center gap-1.5 opacity-90 group-hover:opacity-100">
-                        <button
-                          onClick={() => onOpenEditModal(tx)}
-                          title="Edit Transaction"
-                          className="p-1.5 text-slate-400 hover:text-brand-300 hover:bg-brand-500/15 rounded-lg transition-colors"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteId(tx.id)}
-                          title="Delete Transaction"
-                          className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -399,23 +325,23 @@ export const Transactions = ({
 
       {/* Delete Confirmation Modal */}
       {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="w-full max-w-sm p-6 rounded-3xl bg-navy-900 border border-slate-700 shadow-2xl space-y-4">
-            <h4 className="text-lg font-bold text-white">Delete Transaction?</h4>
-            <p className="text-xs text-slate-300">
-              This action cannot be undone. It will remove this record from your ledger and adjust historical analytics accordingly.
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm p-6 rounded-2xl bg-white border border-neutral-200 shadow-modal space-y-4">
+            <h4 className="text-base font-bold text-neutral-950">Delete Transaction?</h4>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              This transaction will be permanently removed from your ledger. This action cannot be undone.
             </p>
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
                 onClick={() => setDeleteId(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white rounded-xl hover:bg-slate-800"
+                className="px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-100 rounded-lg"
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleDelete(deleteId)}
                 disabled={deleting}
-                className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors disabled:opacity-50"
+                className="px-4 py-2 text-xs font-bold bg-black text-white hover:bg-neutral-800 rounded-lg disabled:opacity-50"
               >
                 {deleting ? 'Deleting...' : 'Delete'}
               </button>

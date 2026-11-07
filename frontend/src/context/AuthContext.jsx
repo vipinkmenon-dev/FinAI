@@ -57,11 +57,17 @@ export const AuthProvider = ({ children }) => {
     return res;
   };
 
-  const logout = () => {
-    localStorage.removeItem('finai_token');
-    localStorage.removeItem('finai_user');
-    setToken(null);
-    setUser(null);
+  const logout = async () => {
+    try {
+      await api.logout();
+    } catch (err) {
+      // Ignore network errors on logout
+    } finally {
+      localStorage.removeItem('finai_token');
+      localStorage.removeItem('finai_user');
+      setToken(null);
+      setUser(null);
+    }
   };
 
   const updateUser = (updatedUser) => {

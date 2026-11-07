@@ -15,6 +15,7 @@ async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const config = {
     ...options,
+    credentials: 'same-origin',
     headers: {
       ...getHeaders(),
       ...(options.headers || {}),
@@ -41,6 +42,7 @@ export const api = {
   // Auth
   register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
   login: (payload) => request('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
 
   // Transactions
   getTransactions: (params = {}) => {
@@ -85,9 +87,9 @@ export const api = {
   getAIMessages: (limit = 50) => request(`/ai/messages?limit=${limit}`),
   clearAIMessages: () => request('/ai/messages', { method: 'DELETE' }),
 
-  // User & Settings
+  // User Profile & Settings
   getProfile: () => request('/user/profile'),
   updateProfile: (data) => request('/user/profile', { method: 'PUT', body: JSON.stringify(data) }),
   changePassword: (data) => request('/user/change-password', { method: 'PUT', body: JSON.stringify(data) }),
-  resetDemoData: () => request('/user/reset-demo-data', { method: 'POST' }),
+  deleteAccount: (data) => request('/user/account', { method: 'DELETE', body: JSON.stringify(data) }),
 };

@@ -1,7 +1,8 @@
-from flask import Blueprint, request, jsonify, g
-from database import get_db, seed_sample_data
+from flask import Blueprint, request, jsonify, g, session
+from database import get_db
 from auth import jwt_required
 from werkzeug.security import generate_password_hash, check_password_hash
+import json
 
 user_bp = Blueprint("user", __name__, url_prefix="/api/user")
 
@@ -12,17 +13,29 @@ def get_profile():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, email, full_name, currency, theme, alert_threshold, created_at
+        SELECT id, email, full_name, currency, theme, alert_threshold, created_at, updated_at
         FROM users
         WHERE id = ?
     """, (user_id,))
     user = cursor.fetchone()
+    
+    # Also fetch user_settings
+    cursor.execute("SELECT currency, preferences FROM user_settings WHERE user_id = ?", (user_id,))
+    settings_row = cursor.fetchone()
     conn.close()
 
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    return jsonify({"user": dict(user)}), 200
+    user_dict = dict(user)
+    if settings_row:
+        user_dict["currency"] = settings_row["currency"] or user_dict["currency"]
+        try:
+            user_dict["preferences"] = json.loads(settings_row["preferences"] or "{}")
+        except Exception:
+            user_dict["preferences"] = {}
+
+    return jsonify({"user": user_dict}), 200
 
 @user_bp.route("/profile", methods=["PUT"])
 @jwt_required
@@ -39,8 +52,7 @@ def update_profile():
         return jsonify({"error": "User not found"}), 404
 
     full_name = data.get("full_name", current_user["full_name"]).strip()
-    currency = data.get("currency", current_user["currency"]).strip()
-    theme = data.get("theme", current_user["theme"]).strip()
+    currency = data.get("currency", current_user["currency"]).strip() or "₹"
     alert_threshold = data.get("alert_threshold", current_user["alert_threshold"])
 
     try:
@@ -56,13 +68,21 @@ def update_profile():
 
     cursor.execute("""
         UPDATE users
-        SET full_name = ?, currency = ?, theme = ?, alert_threshold = ?
+        SET full_name = ?, currency = ?, alert_threshold = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-    """, (full_name, currency, theme, alert_threshold, user_id))
+    """, (full_name, currency, alert_threshold, user_id))
+
+    # Also update user_settings
+    cursor.execute("""
+        INSERT INTO user_settings (user_id, currency, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET currency = excluded.currency, updated_at = CURRENT_TIMESTAMP
+    """, (user_id, currency))
+
     conn.commit()
 
     cursor.execute("""
-        SELECT id, email, full_name, currency, theme, alert_threshold, created_at
+        SELECT id, email, full_name, currency, theme, alert_threshold, created_at, updated_at
         FROM users WHERE id = ?
     """, (user_id,))
     updated_user = dict(cursor.fetchone())
@@ -96,15 +116,37 @@ def change_password():
         return jsonify({"error": "Current password is incorrect"}), 401
 
     new_hash = generate_password_hash(new_pw, method="pbkdf2:sha256")
-    cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+    cursor.execute("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_hash, user_id))
     conn.commit()
     conn.close()
 
     return jsonify({"message": "Password changed successfully"}), 200
 
-@user_bp.route("/reset-demo-data", methods=["POST"])
+@user_bp.route("/account", methods=["DELETE"])
 @jwt_required
-def reset_demo():
+def delete_account():
+    """Permanently delete user account and all personal financial records."""
     user_id = g.user_id
-    seed_sample_data(user_id)
-    return jsonify({"message": "Sample transactions, budgets, and insights reloaded successfully!"}), 200
+    data = request.get_json() or {}
+    password = data.get("password", "").strip()
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({"error": "Account not found"}), 404
+
+    if password and not check_password_hash(row["password_hash"], password):
+        conn.close()
+        return jsonify({"error": "Incorrect password. Cannot delete account."}), 401
+
+    # Cascading delete cleans transactions, budgets, settings, ai_messages
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    session.clear()
+    return jsonify({"message": "Your account and all associated financial records have been permanently deleted."}), 200

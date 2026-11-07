@@ -16,7 +16,7 @@ export const CurrencyProvider = ({ children }) => {
   const formatMoney = (amount) => {
     const num = Number(amount) || 0;
     return `${currency}${num.toLocaleString('en-IN', {
-      minimumFractionDigits: 0,
+      minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
   };

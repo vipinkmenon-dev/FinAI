@@ -4,34 +4,41 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        navy: {
-          950: '#070b14',
-          900: '#0b1120',
-          850: '#0f172a',
-          800: '#15203b',
-          750: '#1b284a',
-          700: '#233460',
-          600: '#344c85'
+        fintech: {
+          bg: '#FFFFFF',
+          sidebar: '#000000',
+          card: '#FFFFFF',
+          border: '#E5E5E5',
+          subtle: '#F7F7F7',
+          input: '#FFFFFF',
+          'input-border': '#D9D9D9',
+          text: '#111111',
+          muted: '#777777',
         },
-        brand: {
-          50: '#f5f3ff',
-          100: '#ede9fe',
-          200: '#ddd6fe',
-          300: '#c4b5fd',
-          400: '#a78bfa',
-          500: '#8b5cf6',
-          600: '#7c3aed',
-          700: '#6d28d9',
-          800: '#5b21b6',
-          900: '#4c1d95',
+        neutral: {
+          50: '#F9F9F9',
+          100: '#F7F7F7',
+          200: '#E5E5E5',
+          300: '#D9D9D9',
+          400: '#999999',
+          500: '#777777',
+          600: '#555555',
+          700: '#333333',
+          800: '#222222',
+          900: '#111111',
+          950: '#000000'
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['Inter', 'Geist', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      },
+      boxShadow: {
+        'subtle': '0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04)',
+        'card': '0 2px 8px 0 rgba(0, 0, 0, 0.04)',
+        'modal': '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
       }
     },
   },

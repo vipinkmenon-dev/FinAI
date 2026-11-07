@@ -1,40 +1,34 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
-import { useTheme } from './context/ThemeContext';
-import { useCurrency } from './context/CurrencyContext';
 import { Sidebar } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { TransactionModal } from './components/TransactionModal';
 import { BudgetModal } from './components/BudgetModal';
+import { Landing } from './pages/Landing';
+import { Login } from './pages/Login';
+import { Register } from './pages/Register';
+import { ForgotPassword } from './pages/ForgotPassword';
 import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
 import { Budgets } from './pages/Budgets';
 import { Analytics } from './pages/Analytics';
 import { AIChat } from './pages/AIChat';
+import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
-import { Login } from './pages/Login';
-import { Register } from './pages/Register';
 import { api } from './services/api';
 
-export function App() {
+// Route Guard for Authenticated Users
+const ProtectedLayout = ({ children, activeTitle }) => {
   const { user, loading } = useAuth();
-  const [authView, setAuthView] = useState('login'); // 'login' | 'register'
-  const [activeTab, setActiveTab] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  // Modals
   const [txModalOpen, setTxModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
-
   const [budgetModalOpen, setBudgetModalOpen] = useState(false);
-  const [budgetModalDate, setBudgetModalDate] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
-
-  // Data refresh triggers
+  const [budgetDate, setBudgetDate] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
   const [refreshKey, setRefreshKey] = useState(0);
   const [alerts, setAlerts] = useState([]);
-  const [initialAIPrompt, setInitialAIPrompt] = useState('');
 
-  // Fetch alerts whenever user is authenticated or ledger updates
   useEffect(() => {
     if (user) {
       loadAlerts();
@@ -70,101 +64,59 @@ export function App() {
   };
 
   const handleOpenBudgetModal = (year, month) => {
-    setBudgetModalDate({ year, month });
+    setBudgetDate({ year, month });
     setBudgetModalOpen(true);
   };
 
-  const handleBudgetSubmit = async (budgetData) => {
-    await api.setBudget(budgetData);
+  const handleBudgetSubmit = async (data) => {
+    await api.setBudget(data);
     setRefreshKey((k) => k + 1);
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-navy-950 text-white">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs font-bold uppercase tracking-wider text-brand-300">
-            Initializing FinAI Platform...
+      <div className="flex items-center justify-center min-h-screen bg-white text-neutral-900">
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs font-bold uppercase tracking-wider text-neutral-600">
+            Initializing FinAI...
           </p>
         </div>
       </div>
     );
   }
 
-  // Not logged in -> Show Authentication views
   if (!user) {
-    return authView === 'login' ? (
-      <Login onSwitchToRegister={() => setAuthView('register')} />
-    ) : (
-      <Register onSwitchToLogin={() => setAuthView('login')} />
-    );
+    return <Navigate to="/login" replace />;
   }
 
   return (
-    <div className="min-h-screen bg-navy-950 text-slate-100 flex">
-      {/* Sidebar Navigation */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-      />
+    <div className="min-h-screen bg-white text-neutral-900 flex">
+      {/* Strict #000000 Pure Black Sidebar */}
+      <Sidebar mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-72">
+      {/* Main App Layout */}
+      <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
         <Navbar
-          activeTab={activeTab}
+          title={activeTitle}
           setMobileOpen={setMobileOpen}
           onOpenAddModal={handleOpenAddTx}
           alerts={alerts}
-          onRefreshAlerts={loadAlerts}
         />
 
-        <main className="flex-1 p-4 md:p-8 max-w-7xl w-full mx-auto">
-          {activeTab === 'dashboard' && (
-            <Dashboard
-              key={refreshKey}
-              setActiveTab={setActiveTab}
-              onOpenAddModal={handleOpenAddTx}
-              setInitialAIPrompt={setInitialAIPrompt}
-            />
-          )}
-
-          {activeTab === 'transactions' && (
-            <Transactions
-              key={refreshKey}
-              onOpenAddModal={handleOpenAddTx}
-              onOpenEditModal={handleOpenEditTx}
-              refreshTrigger={refreshKey}
-              onTransactionUpdated={() => setRefreshKey((k) => k + 1)}
-            />
-          )}
-
-          {activeTab === 'budgets' && (
-            <Budgets
-              key={refreshKey}
-              onOpenBudgetModal={handleOpenBudgetModal}
-              refreshTrigger={refreshKey}
-              onBudgetUpdated={() => setRefreshKey((k) => k + 1)}
-            />
-          )}
-
-          {activeTab === 'analytics' && (
-            <Analytics key={refreshKey} />
-          )}
-
-          {activeTab === 'ai-advisor' && (
-            <AIChat initialPrompt={initialAIPrompt} />
-          )}
-
-          {activeTab === 'settings' && (
-            <Settings onDataReloaded={() => setRefreshKey((k) => k + 1)} />
-          )}
+        <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto">
+          {React.cloneElement(children, {
+            onOpenAddModal: handleOpenAddTx,
+            onOpenEditModal: handleOpenEditTx,
+            onOpenBudgetModal: handleOpenBudgetModal,
+            refreshTrigger: refreshKey,
+            onTransactionUpdated: () => setRefreshKey((k) => k + 1),
+            onBudgetUpdated: () => setRefreshKey((k) => k + 1),
+          })}
         </main>
       </div>
 
-      {/* Transaction Add / Edit Modal */}
+      {/* Transaction Modal */}
       <TransactionModal
         isOpen={txModalOpen}
         onClose={() => setTxModalOpen(false)}
@@ -172,15 +124,96 @@ export function App() {
         initialData={editingTransaction}
       />
 
-      {/* Budget Set Modal */}
+      {/* Budget Limit Modal */}
       <BudgetModal
         isOpen={budgetModalOpen}
         onClose={() => setBudgetModalOpen(false)}
         onSubmit={handleBudgetSubmit}
-        currentYear={budgetModalDate.year}
-        currentMonth={budgetModalDate.month}
+        currentYear={budgetDate.year}
+        currentMonth={budgetDate.month}
       />
     </div>
+  );
+};
+
+export function App() {
+  const { user, loading } = useAuth();
+
+  return (
+    <Routes>
+      {/* Public Routes */}
+      <Route path="/" element={<Landing />} />
+      <Route
+        path="/login"
+        element={!loading && user ? <Navigate to="/dashboard" replace /> : <Login />}
+      />
+      <Route
+        path="/register"
+        element={!loading && user ? <Navigate to="/dashboard" replace /> : <Register />}
+      />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+
+      {/* Protected Routes */}
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedLayout activeTitle="Dashboard">
+            <Dashboard />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/transactions"
+        element={
+          <ProtectedLayout activeTitle="Transactions">
+            <Transactions />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/budgets"
+        element={
+          <ProtectedLayout activeTitle="Budgets & Limits">
+            <Budgets />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/analytics"
+        element={
+          <ProtectedLayout activeTitle="Analytics & Reports">
+            <Analytics />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/ai-assistant"
+        element={
+          <ProtectedLayout activeTitle="FinAI Assistant">
+            <AIChat />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          <ProtectedLayout activeTitle="Account Profile">
+            <Profile />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <ProtectedLayout activeTitle="Settings">
+            <Settings />
+          </ProtectedLayout>
+        }
+      />
+
+      {/* Fallback */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 

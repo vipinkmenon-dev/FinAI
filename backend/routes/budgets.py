@@ -21,21 +21,21 @@ def get_budgets():
     user_row = cursor.fetchone()
     threshold = user_row["alert_threshold"] if user_row else 80.0
 
-    # Get budgets for month/year
+    # Get budgets for month/year for THIS user
     cursor.execute("""
-        SELECT id, category, allocated_amount, updated_at
+        SELECT id, category, monthly_limit, created_at
         FROM budgets
         WHERE user_id = ? AND year = ? AND month = ?
         ORDER BY category ASC
     """, (user_id, year, month))
     budget_rows = cursor.fetchall()
 
-    # Get actual spending per category for this month/year
+    # Get actual spending per category for this month/year for THIS user
     month_pattern = f"{year:04d}-{month:02d}-%"
     cursor.execute("""
         SELECT category, SUM(amount) as total_spent
         FROM transactions
-        WHERE user_id = ? AND type = 'expense' AND date LIKE ?
+        WHERE user_id = ? AND transaction_type = 'expense' AND transaction_date LIKE ?
         GROUP BY category
     """, (user_id, month_pattern))
     spent_by_cat = {row["category"]: float(row["total_spent"]) for row in cursor.fetchall()}
@@ -48,7 +48,7 @@ def get_budgets():
 
     for b in budget_rows:
         cat = b["category"]
-        allocated = float(b["allocated_amount"])
+        allocated = float(b["monthly_limit"])
         spent = spent_by_cat.get(cat, 0.0)
         remaining = allocated - spent
         percent = (spent / allocated * 100) if allocated > 0 else 0.0
@@ -66,15 +66,15 @@ def get_budgets():
         budget_items.append({
             "id": b["id"],
             "category": cat,
+            "monthly_limit": allocated,
             "allocated_amount": allocated,
             "spent_amount": round(spent, 2),
             "remaining_amount": round(remaining, 2),
             "percentage_used": round(percent, 1),
             "status": status,
-            "updated_at": b["updated_at"]
+            "created_at": b["created_at"]
         })
 
-    # Total actual expenses for this month across all categories (budgeted or unbudgeted)
     all_spent = sum(spent_by_cat.values())
     unbudgeted_spent = max(0.0, all_spent - total_budgeted_spent)
 
@@ -100,7 +100,7 @@ def set_budget():
     year = data.get("year", now.year)
     month = data.get("month", now.month)
     category = data.get("category", "").strip()
-    allocated_amount = data.get("allocated_amount")
+    allocated_amount = data.get("monthly_limit", data.get("allocated_amount"))
 
     if not category:
         return jsonify({"error": "Category is required"}), 400
@@ -108,9 +108,9 @@ def set_budget():
     try:
         allocated_amount = float(allocated_amount)
         if allocated_amount <= 0:
-            return jsonify({"error": "Allocated amount must be greater than zero"}), 400
+            return jsonify({"error": "Monthly limit amount must be greater than zero"}), 400
     except (TypeError, ValueError):
-        return jsonify({"error": "Valid numeric allocated amount is required"}), 400
+        return jsonify({"error": "Valid numeric monthly limit amount is required"}), 400
 
     try:
         year = int(year)
@@ -123,10 +123,10 @@ def set_budget():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO budgets (user_id, year, month, category, allocated_amount, updated_at)
+        INSERT INTO budgets (user_id, year, month, category, monthly_limit, created_at)
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id, year, month, category)
-        DO UPDATE SET allocated_amount = excluded.allocated_amount, updated_at = CURRENT_TIMESTAMP
+        DO UPDATE SET monthly_limit = excluded.monthly_limit
     """, (user_id, year, month, category, allocated_amount))
     conn.commit()
 
@@ -136,6 +136,7 @@ def set_budget():
     budget_row = dict(cursor.fetchone())
     conn.close()
 
+    budget_row["allocated_amount"] = budget_row["monthly_limit"]
     return jsonify({
         "message": "Budget limit set successfully",
         "budget": budget_row
@@ -150,7 +151,7 @@ def delete_budget(budget_id):
     cursor.execute("SELECT id FROM budgets WHERE id = ? AND user_id = ?", (budget_id, user_id))
     if not cursor.fetchone():
         conn.close()
-        return jsonify({"error": "Budget entry not found"}), 404
+        return jsonify({"error": "Budget entry not found or access denied"}), 404
 
     cursor.execute("DELETE FROM budgets WHERE id = ? AND user_id = ?", (budget_id, user_id))
     conn.commit()
@@ -169,19 +170,20 @@ def get_alerts():
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT alert_threshold FROM users WHERE id = ?", (user_id,))
+    cursor.execute("SELECT currency, alert_threshold FROM users WHERE id = ?", (user_id,))
     user_row = cursor.fetchone()
     threshold = user_row["alert_threshold"] if user_row else 80.0
+    currency = user_row["currency"] if user_row else "₹"
 
     cursor.execute("""
-        SELECT b.category, b.allocated_amount, COALESCE(SUM(t.amount), 0) as spent_amount
+        SELECT b.category, b.monthly_limit as allocated_amount, COALESCE(SUM(t.amount), 0) as spent_amount
         FROM budgets b
         LEFT JOIN transactions t ON t.user_id = b.user_id 
             AND t.category = b.category 
-            AND t.type = 'expense' 
-            AND t.date LIKE ?
+            AND t.transaction_type = 'expense' 
+            AND t.transaction_date LIKE ?
         WHERE b.user_id = ? AND b.year = ? AND b.month = ?
-        GROUP BY b.category, b.allocated_amount
+        GROUP BY b.category, b.monthly_limit
     """, (f"{year:04d}-{month:02d}-%", user_id, year, month))
 
     alerts = []
@@ -197,7 +199,7 @@ def get_alerts():
                 "allocated": allocated,
                 "spent": spent,
                 "percent": round(percent, 1),
-                "message": f"Over budget! You spent ₹{spent:,.0f} of ₹{allocated:,.0f} ({round(percent, 1)}%) in {row['category']}."
+                "message": f"Over budget! You spent {currency}{spent:,.0f} of {currency}{allocated:,.0f} ({round(percent, 1)}%) in {row['category']}."
             })
         elif percent >= threshold:
             alerts.append({
@@ -206,7 +208,7 @@ def get_alerts():
                 "allocated": allocated,
                 "spent": spent,
                 "percent": round(percent, 1),
-                "message": f"Nearing limit: {row['category']} is at {round(percent, 1)}% of budget (₹{spent:,.0f}/₹{allocated:,.0f})."
+                "message": f"Nearing limit: {row['category']} is at {round(percent, 1)}% of budget ({currency}{spent:,.0f}/{currency}{allocated:,.0f})."
             })
 
     conn.close()

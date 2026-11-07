@@ -6,32 +6,48 @@ from auth import jwt_required
 transactions_bp = Blueprint("transactions", __name__, url_prefix="/api/transactions")
 
 DEFAULT_EXPENSE_CATEGORIES = [
-    "Housing", "Food & Dining", "Groceries", "Utilities",
-    "Transportation", "Entertainment", "Shopping", "Healthcare",
-    "Subscriptions", "Education", "Travel", "Personal Care", "Miscellaneous"
+    "Food", "Transportation", "Shopping", "Education",
+    "Healthcare", "Bills", "Entertainment", "Groceries",
+    "Rent", "Other expenses"
 ]
 
 DEFAULT_INCOME_CATEGORIES = [
-    "Salary", "Freelance", "Investment Returns", "Bonus",
-    "Rental Income", "Business", "Gifts", "Other"
+    "Salary", "Freelancing", "Business", "Investments", "Other income"
 ]
 
 DEFAULT_PAYMENT_METHODS = [
-    "UPI / Net Banking", "Credit Card", "Debit Card", "Cash", "Bank Transfer", "Digital Wallet"
+    "UPI / Net Banking", "Credit Card", "Debit Card", "Cash", "Bank Transfer"
 ]
+
+def format_tx_dict(row):
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "transaction_type": row["transaction_type"],
+        "type": row["transaction_type"],
+        "amount": float(row["amount"]),
+        "category": row["category"],
+        "description": row["description"] or "",
+        "payment_method": row["payment_method"],
+        "transaction_date": str(row["transaction_date"]),
+        "date": str(row["transaction_date"]),
+        "created_at": str(row["created_at"])
+    }
 
 @transactions_bp.route("", methods=["GET"])
 @jwt_required
 def get_transactions():
     user_id = g.user_id
     search = request.args.get("search", "").strip()
-    tx_type = request.args.get("type", "").strip()
+    tx_type = request.args.get("type", request.args.get("transaction_type", "")).strip().lower()
     category = request.args.get("category", "").strip()
     payment_method = request.args.get("payment_method", "").strip()
     start_date = request.args.get("start_date", "").strip()
     end_date = request.args.get("end_date", "").strip()
     month = request.args.get("month", type=int)
     year = request.args.get("year", type=int)
+    sort_by = request.args.get("sort_by", "date").strip().lower()
+    order = request.args.get("order", "desc").strip().lower()
     limit = request.args.get("limit", default=200, type=int)
     offset = request.args.get("offset", default=0, type=int)
 
@@ -47,7 +63,7 @@ def get_transactions():
         params.extend([term, term, term])
 
     if tx_type in ("income", "expense"):
-        query += " AND type = ?"
+        query += " AND transaction_type = ?"
         params.append(tx_type)
 
     if category:
@@ -59,20 +75,20 @@ def get_transactions():
         params.append(payment_method)
 
     if start_date:
-        query += " AND date >= ?"
+        query += " AND transaction_date >= ?"
         params.append(start_date)
 
     if end_date:
-        query += " AND date <= ?"
+        query += " AND transaction_date <= ?"
         params.append(end_date)
 
     if year and month:
         prefix = f"{year:04d}-{month:02d}-%"
-        query += " AND date LIKE ?"
+        query += " AND transaction_date LIKE ?"
         params.append(prefix)
     elif year:
         prefix = f"{year:04d}-%"
-        query += " AND date LIKE ?"
+        query += " AND transaction_date LIKE ?"
         params.append(prefix)
 
     # Count total matching
@@ -80,15 +96,17 @@ def get_transactions():
     cursor.execute(count_query, params)
     total_count = cursor.fetchone()[0]
 
-    # Order and paginate
-    query += " ORDER BY date DESC, id DESC LIMIT ? OFFSET ?"
+    # Sorting
+    order_col = "amount" if sort_by == "amount" else "transaction_date"
+    order_dir = "ASC" if order == "asc" else "DESC"
+    query += f" ORDER BY {order_col} {order_dir}, id DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
 
-    transactions = [dict(row) for row in rows]
+    transactions = [format_tx_dict(row) for row in rows]
     return jsonify({
         "transactions": transactions,
         "total": total_count,
@@ -102,12 +120,12 @@ def create_transaction():
     user_id = g.user_id
     data = request.get_json() or {}
 
-    tx_type = data.get("type", "").strip().lower()
+    tx_type = data.get("transaction_type", data.get("type", "")).strip().lower()
     amount = data.get("amount")
     category = data.get("category", "").strip()
     payment_method = data.get("payment_method", "").strip()
-    description = data.get("description", "").strip()
-    date_str = data.get("date", "").strip()
+    description = data.get("description", data.get("title", "")).strip()
+    date_str = data.get("transaction_date", data.get("date", "")).strip()
 
     if tx_type not in ("income", "expense"):
         return jsonify({"error": "Type must be 'income' or 'expense'"}), 400
@@ -136,18 +154,18 @@ def create_transaction():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO transactions (user_id, type, amount, category, payment_method, description, date)
+        INSERT INTO transactions (user_id, transaction_type, amount, category, description, payment_method, transaction_date)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, tx_type, amount, category, payment_method, description, date_str))
+    """, (user_id, tx_type, amount, category, description, payment_method, date_str))
     tx_id = cursor.lastrowid
     conn.commit()
 
     cursor.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,))
-    new_tx = dict(cursor.fetchone())
+    new_tx = format_tx_dict(cursor.fetchone())
     conn.close()
 
     return jsonify({
-        "message": "Transaction created successfully",
+        "message": "Transaction recorded successfully",
         "transaction": new_tx
     }), 201
 
@@ -163,9 +181,9 @@ def update_transaction(tx_id):
     existing = cursor.fetchone()
     if not existing:
         conn.close()
-        return jsonify({"error": "Transaction not found"}), 404
+        return jsonify({"error": "Transaction not found or access denied"}), 404
 
-    tx_type = data.get("type", existing["type"]).strip().lower()
+    tx_type = data.get("transaction_type", data.get("type", existing["transaction_type"])).strip().lower()
     if tx_type not in ("income", "expense"):
         conn.close()
         return jsonify({"error": "Type must be 'income' or 'expense'"}), 400
@@ -181,8 +199,8 @@ def update_transaction(tx_id):
 
     category = data.get("category", existing["category"]).strip()
     payment_method = data.get("payment_method", existing["payment_method"]).strip()
-    description = data.get("description", existing["description"]).strip()
-    date_str = data.get("date", existing["date"]).strip()
+    description = data.get("description", data.get("title", existing["description"])).strip()
+    date_str = data.get("transaction_date", data.get("date", existing["transaction_date"])).strip()
 
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
@@ -192,13 +210,13 @@ def update_transaction(tx_id):
 
     cursor.execute("""
         UPDATE transactions
-        SET type = ?, amount = ?, category = ?, payment_method = ?, description = ?, date = ?
+        SET transaction_type = ?, amount = ?, category = ?, description = ?, payment_method = ?, transaction_date = ?
         WHERE id = ? AND user_id = ?
-    """, (tx_type, amount, category, payment_method, description, date_str, tx_id, user_id))
+    """, (tx_type, amount, category, description, payment_method, date_str, tx_id, user_id))
     conn.commit()
 
     cursor.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,))
-    updated_tx = dict(cursor.fetchone())
+    updated_tx = format_tx_dict(cursor.fetchone())
     conn.close()
 
     return jsonify({
@@ -215,7 +233,7 @@ def delete_transaction(tx_id):
     cursor.execute("SELECT id FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id))
     if not cursor.fetchone():
         conn.close()
-        return jsonify({"error": "Transaction not found"}), 404
+        return jsonify({"error": "Transaction not found or access denied"}), 404
 
     cursor.execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id))
     conn.commit()
@@ -232,7 +250,7 @@ def get_metadata():
 
     # Get any custom categories the user used
     cursor.execute("""
-        SELECT DISTINCT category, type FROM transactions WHERE user_id = ?
+        SELECT DISTINCT category, transaction_type FROM transactions WHERE user_id = ?
     """, (user_id,))
     user_cats = cursor.fetchall()
     conn.close()
@@ -241,9 +259,9 @@ def get_metadata():
     income_cats = set(DEFAULT_INCOME_CATEGORIES)
 
     for row in user_cats:
-        if row["type"] == "expense":
+        if row["transaction_type"] == "expense":
             expense_cats.add(row["category"])
-        elif row["type"] == "income":
+        elif row["transaction_type"] == "income":
             income_cats.add(row["category"])
 
     return jsonify({

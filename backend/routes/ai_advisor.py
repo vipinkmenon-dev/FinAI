@@ -9,11 +9,11 @@ from auth import jwt_required
 
 ai_advisor_bp = Blueprint("ai_advisor", __name__, url_prefix="/api/ai")
 
-DISCRETIONARY_CATEGORIES = {"Food & Dining", "Entertainment", "Shopping", "Subscriptions", "Personal Care", "Miscellaneous"}
-ESSENTIAL_CATEGORIES = {"Housing", "Groceries", "Utilities", "Transportation", "Healthcare", "Education"}
+DISCRETIONARY_CATEGORIES = {"Food", "Entertainment", "Shopping", "Other expenses"}
+ESSENTIAL_CATEGORIES = {"Rent", "Groceries", "Bills", "Transportation", "Healthcare", "Education"}
 
 def fetch_financial_context(user_id):
-    """Gathers comprehensive, real-time metrics from the database for contextual reasoning."""
+    """Gathers real-time metrics strictly for the authenticated user from SQLite."""
     conn = get_db()
     cursor = conn.cursor()
 
@@ -29,14 +29,18 @@ def fetch_financial_context(user_id):
     currency = user["currency"] if user else "₹"
     user_name = user["full_name"] if user else "User"
 
+    # Total all-time transaction count for user
+    cursor.execute("SELECT COUNT(*) FROM transactions WHERE user_id = ?", (user_id,))
+    all_time_count = cursor.fetchone()[0]
+
     # Current month income & expenses
     cursor.execute("""
-        SELECT type, COALESCE(SUM(amount), 0) as total
+        SELECT transaction_type, COALESCE(SUM(amount), 0) as total, COUNT(*) as count
         FROM transactions
-        WHERE user_id = ? AND date LIKE ?
-        GROUP BY type
+        WHERE user_id = ? AND transaction_date LIKE ?
+        GROUP BY transaction_type
     """, (user_id, f"{cur_ym}-%"))
-    cur_totals = {r["type"]: float(r["total"]) for r in cursor.fetchall()}
+    cur_totals = {r["transaction_type"]: float(r["total"]) for r in cursor.fetchall()}
     cur_income = cur_totals.get("income", 0.0)
     cur_expense = cur_totals.get("expense", 0.0)
     cur_savings = cur_income - cur_expense
@@ -44,12 +48,12 @@ def fetch_financial_context(user_id):
 
     # Previous month totals
     cursor.execute("""
-        SELECT type, COALESCE(SUM(amount), 0) as total
+        SELECT transaction_type, COALESCE(SUM(amount), 0) as total
         FROM transactions
-        WHERE user_id = ? AND date LIKE ?
-        GROUP BY type
+        WHERE user_id = ? AND transaction_date LIKE ?
+        GROUP BY transaction_type
     """, (user_id, f"{prev_ym}-%"))
-    prev_totals = {r["type"]: float(r["total"]) for r in cursor.fetchall()}
+    prev_totals = {r["transaction_type"]: float(r["total"]) for r in cursor.fetchall()}
     prev_income = prev_totals.get("income", 0.0)
     prev_expense = prev_totals.get("expense", 0.0)
 
@@ -57,7 +61,7 @@ def fetch_financial_context(user_id):
     cursor.execute("""
         SELECT category, SUM(amount) as total, COUNT(*) as count
         FROM transactions
-        WHERE user_id = ? AND type = 'expense' AND date LIKE ?
+        WHERE user_id = ? AND transaction_type = 'expense' AND transaction_date LIKE ?
         GROUP BY category
         ORDER BY total DESC
     """, (user_id, f"{cur_ym}-%"))
@@ -71,9 +75,9 @@ def fetch_financial_context(user_id):
 
     # Highest individual transaction this month
     cursor.execute("""
-        SELECT category, amount, description, date
+        SELECT category, amount, description, transaction_date
         FROM transactions
-        WHERE user_id = ? AND type = 'expense' AND date LIKE ?
+        WHERE user_id = ? AND transaction_type = 'expense' AND transaction_date LIKE ?
         ORDER BY amount DESC LIMIT 1
     """, (user_id, f"{cur_ym}-%"))
     top_tx = cursor.fetchone()
@@ -85,22 +89,21 @@ def fetch_financial_context(user_id):
 
     # Daily burn rate & expense projection
     days_passed = max(now.day, 1)
-    # Estimate days in month roughly 30
     days_in_month = 30
-    daily_burn_rate = cur_expense / days_passed
+    daily_burn_rate = cur_expense / days_passed if cur_expense > 0 else 0.0
     projected_monthly_expense = daily_burn_rate * days_in_month
     projected_savings = cur_income - projected_monthly_expense
 
-    # Active budgets
+    # Active budgets for current month
     cursor.execute("""
-        SELECT b.category, b.allocated_amount, COALESCE(SUM(t.amount), 0) as spent
+        SELECT b.category, b.monthly_limit as allocated_amount, COALESCE(SUM(t.amount), 0) as spent
         FROM budgets b
         LEFT JOIN transactions t ON t.user_id = b.user_id 
             AND t.category = b.category 
-            AND t.type = 'expense'
-            AND t.date LIKE ?
+            AND t.transaction_type = 'expense'
+            AND t.transaction_date LIKE ?
         WHERE b.user_id = ? AND b.year = ? AND b.month = ?
-        GROUP BY b.category, b.allocated_amount
+        GROUP BY b.category, b.monthly_limit
     """, (f"{cur_ym}-%", user_id, now.year, now.month))
     budgets = [{
         "category": r["category"],
@@ -114,6 +117,8 @@ def fetch_financial_context(user_id):
     return {
         "user_name": user_name,
         "currency": currency,
+        "has_data": all_time_count > 0,
+        "all_time_count": all_time_count,
         "period": cur_ym,
         "current_income": cur_income,
         "current_expense": cur_expense,
@@ -133,18 +138,27 @@ def fetch_financial_context(user_id):
 
 def generate_heuristic_response(prompt, context):
     """
-    Intelligent deterministic financial assistant engine.
-    Accurately and dynamically parses user intentions, queries live financial stats,
-    clearly differentiates ACTUAL DATA from PROJECTED ESTIMATES, and provides actionable recommendations.
+    Deterministic AI personal finance engine strictly scoped to actual records.
+    Never invents records. If user has no data, advises adding transactions.
     """
     p_lower = prompt.lower()
     c = context["currency"]
-    
-    # 1. "Where did I spend the most money?"
-    if any(q in p_lower for q in ["where did i spend the most", "biggest expense", "highest spending", "top spending", "most money"]):
+
+    # If the user has zero financial records, prompt them to add records first
+    if not context["has_data"]:
+        return (
+            f"### 📊 No Financial Records Found\n\n"
+            f"Hello {context['user_name']}! You currently have zero transactions recorded in your personal ledger.\n\n"
+            f"To provide accurate financial analysis, spending summaries, and predictive savings advice, "
+            f"I require your actual transaction numbers.\n\n"
+            f"👉 **Next Step:** Go to the **Transactions** page and record your first income or expense to get started!"
+        )
+
+    # 1. "Where did I spend the most money?" / "What are my biggest expenses?"
+    if any(q in p_lower for q in ["where did i spend the most", "biggest expense", "highest spending", "top spending", "most money", "biggest expenses"]):
         if not context["categories"]:
-            return f"You don't have any recorded expenses for the current month yet."
-        
+            return f"You do not have any recorded expenses for the current month yet. Add your recent expenses in the Transactions section."
+
         top_cat = context["categories"][0]
         top_tx = context["top_expense_tx"]
 
@@ -153,21 +167,47 @@ def generate_heuristic_response(prompt, context):
         res += f"- **Highest Spending Category:** **{top_cat['category']}** at **{c}{top_cat['total']:,.2f}** "
         if context['current_expense'] > 0:
             res += f"({round(top_cat['total'] / context['current_expense'] * 100, 1)}% of your total expenses).\n"
-        
+
         if top_tx:
-            res += f"- **Largest Single Transaction:** **{c}{top_tx['amount']:,.2f}** for *'{top_tx['description']}'* ({top_tx['category']}) on {top_tx['date']}.\n\n"
+            desc = top_tx.get('description') or top_tx['category']
+            res += f"- **Largest Single Transaction:** **{c}{top_tx['amount']:,.2f}** for *'{desc}'* on {top_tx.get('transaction_date', 'this month')}.\n\n"
 
         if len(context["categories"]) > 1:
-            res += f"**Top 3 Spending Categories:**\n"
+            res += f"**Top Spending Categories:**\n"
             for i, cat in enumerate(context["categories"][:3], 1):
                 pct = round((cat['total'] / context['current_expense'] * 100), 1) if context['current_expense'] > 0 else 0
                 res += f"{i}. **{cat['category']}**: {c}{cat['total']:,.2f} ({pct}%)\n"
 
         if top_cat["is_discretionary"]:
-            res += f"\n💡 **Optimization Tip:** Your highest spending is in **{top_cat['category']}**, which is a discretionary category. Setting a strict monthly cap could save you up to {c}{round(top_cat['total'] * 0.2, 0):,.0f}!"
+            res += f"\n💡 **Optimization Tip:** Your highest spending is in **{top_cat['category']}** (discretionary). Capping this category can help you build your reserve faster."
         return res
 
-    # 2. "How much did I save this month?" / "Savings"
+    # 2. "How much did I spend this month?"
+    if any(q in p_lower for q in ["how much did i spend", "what did i spend", "my expenses this month", "total spending this month", "how much spent"]):
+        exp = context["current_expense"]
+        inc = context["current_income"]
+        res = f"### 💳 Monthly Expenditure Report\n\n"
+        res += f"**[ACTUAL DATA - Verified]**\n"
+        res += f"- **Total Expenses This Month:** **{c}{exp:,.2f}**\n"
+        res += f"- **Total Income Received:** **{c}{inc:,.2f}**\n"
+        if exp > 0 and inc > 0:
+            res += f"- **Expense-to-Income Ratio:** {round(exp / inc * 100, 1)}%\n"
+        res += f"\n**[PROJECTED ESTIMATE - Forecast]**\n"
+        res += f"- **Estimated Month-End Outflow:** ~{c}{context['projected_monthly_expense']:,.2f} (based on {c}{context['daily_burn_rate']:,.2f}/day burn rate)."
+        return res
+
+    # 3. "How much income did I receive?"
+    if any(q in p_lower for q in ["how much income", "total income", "income received", "my earnings"]):
+        inc = context["current_income"]
+        res = f"### 💵 Inflow & Income Report\n\n"
+        res += f"**[ACTUAL DATA - Verified]**\n"
+        res += f"- **Total Income Received This Month:** **{c}{inc:,.2f}**\n"
+        if context["prev_income"] > 0:
+            diff = inc - context["prev_income"]
+            res += f"- **Previous Month Income:** {c}{context['prev_income']:,.2f} ({'+' if diff >= 0 else ''}{diff:,.2f} change)\n"
+        return res
+
+    # 4. "How much did I save this month?"
     if any(q in p_lower for q in ["how much did i save", "savings this month", "my savings", "saved this month", "what is my saving"]):
         inc = context["current_income"]
         exp = context["current_expense"]
@@ -180,25 +220,33 @@ def generate_heuristic_response(prompt, context):
         res += f"- **Total Outflow (Expenses):** {c}{exp:,.2f}\n"
         if sav >= 0:
             res += f"- **Net Savings:** **+{c}{sav:,.2f}**\n"
-            res += f"- **Current Savings Rate:** **{rate:.1f}%** (Target healthy benchmark: 20-30%)\n\n"
+            res += f"- **Current Savings Rate:** **{rate:.1f}%** (Healthy benchmark: > 20%)\n\n"
         else:
-            res += f"- **Deficit:** **-{c}{abs(sav):,.2f}** (Expenses exceed income by {c}{abs(sav):,.2f})\n\n"
+            res += f"- **Current Deficit:** **-{c}{abs(sav):,.2f}**\n\n"
 
         res += f"**[PROJECTED ESTIMATE - Forecast]**\n"
-        proj_exp = context["projected_monthly_expense"]
-        proj_sav = context["projected_savings"]
-        res += f"- **Projected Month-End Expenses:** ~{c}{proj_exp:,.2f}\n"
-        res += f"- **Projected Net Savings:** ~{c}{proj_sav:,.2f}\n\n"
-
-        if sav > 0:
-            res += "🎯 **Verdict:** Great job staying positive this month! Keep your discretionary spending controlled to hit your month-end goal."
-        else:
-            res += "⚠️ **Alert:** You are currently in a cash flow deficit. Review non-essential expenses like Shopping and Dining to restore positive cash flow."
+        res += f"- **Projected Month-End Savings:** ~{c}{context['projected_savings']:,.2f}"
         return res
 
-    # 3. "Can I save ₹5,000 next month?" or target amount saving feasibility
+    # 5. "Am I exceeding my monthly budget?"
+    if any(q in p_lower for q in ["exceeding my monthly budget", "over budget", "budget status", "exceed budget", "am i over budget"]):
+        if not context["budgets"]:
+            return f"You have not configured any monthly category budgets yet. Visit the **Budgets & Limits** page to establish spending caps."
+
+        exceeded = [b for b in context["budgets"] if b["status"] == "exceeded"]
+        res = f"### 🎯 Budget Adherence Check\n\n"
+        res += f"**[ACTUAL DATA - Verified]**\n"
+        if exceeded:
+            res += f"⚠️ **Attention:** You have exceeded your limit in {len(exceeded)} category(s):\n"
+            for b in exceeded:
+                res += f"- **{b['category']}**: Spent {c}{b['spent']:,.2f} of {c}{b['allocated']:,.2f} (Over by {c}{(b['spent'] - b['allocated']):,.2f})\n"
+        else:
+            res += f"✅ **All categories are currently within your allocated monthly limits!**\n"
+        return res
+
+    # 6. "How can I save ₹5,000 next month?" or target amount
     target_match = re.search(r'(?:save|target)\s*(?:₹|\$|€|rs\.?|inr)?\s*([0-9,]+)', p_lower)
-    if "save" in p_lower and ("next month" in p_lower or "can i" in p_lower or "target" in p_lower or target_match):
+    if "save" in p_lower and ("next month" in p_lower or "target" in p_lower or target_match):
         target_amt = 5000.0
         if target_match:
             try:
@@ -207,166 +255,108 @@ def generate_heuristic_response(prompt, context):
                 target_amt = 5000.0
 
         inc = context["current_income"] if context["current_income"] > 0 else context["prev_income"]
-        cur_exp = context["current_expense"]
-        disc_spending = context["discretionary_total"]
         cur_sav = context["current_savings"]
-
-        max_allowable_expense = max(0, inc - target_amt)
+        disc_spending = context["discretionary_total"]
 
         res = f"### 🎯 Savings Feasibility Analysis: Target {c}{target_amt:,.2f}\n\n"
-        
-        # Check feasibility
         if cur_sav >= target_amt:
             res += f"✅ **Yes, absolutely!** You are already on track.\n\n"
             res += f"**[ACTUAL DATA - Current Baseline]**\n"
             res += f"- Current Monthly Income: **{c}{inc:,.2f}**\n"
-            res += f"- Current Net Savings: **{c}{cur_sav:,.2f}**\n"
-            res += f"- Required Buffer: You already exceed your target by **+{c}{(cur_sav - target_amt):,.2f}**.\n\n"
+            res += f"- Current Net Savings: **{c}{cur_sav:,.2f}**\n\n"
             res += f"**[ACTION PLAN]**\n"
-            res += f"1. Keep total monthly expenses capped below **{c}{max_allowable_expense:,.2f}**.\n"
-            res += f"2. Automate a transfer of **{c}{target_amt:,.2f}** to your savings/investment account on the 1st of the month."
+            res += f"1. Maintain your current non-essential spending caps.\n"
+            res += f"2. Allocate {c}{target_amt:,.2f} directly into your savings account at the start of next month."
         elif (cur_sav + disc_spending) >= target_amt:
             deficit = target_amt - cur_sav
-            res += f"⚠️ **Yes, with disciplined adjustments.**\n\n"
+            res += f"⚠️ **Yes, with disciplined adjustments to non-essential spending.**\n\n"
             res += f"**[ACTUAL DATA - Current Baseline]**\n"
             res += f"- Current Net Savings: **{c}{cur_sav:,.2f}**\n"
-            res += f"- Target Savings: **{c}{target_amt:,.2f}** (Shortfall: {c}{deficit:,.2f})\n"
-            res += f"- Discretionary Spending Identified: **{c}{disc_spending:,.2f}** (Dining, Shopping, Entertainment)\n\n"
-            res += f"**[PROJECTED ESTIMATE - Path to Goal]**\n"
-            cut_pct = min(100, round((deficit / disc_spending * 100), 1)) if disc_spending > 0 else 50
-            res += f"To save **{c}{target_amt:,.2f}**, you need to trim **{cut_pct}%** ({c}{deficit:,.2f}) from discretionary categories:\n"
-            for cat in [c for c in context["categories"] if c["is_discretionary"]][:3]:
-                rec_cut = round(cat['total'] * 0.25, 0)
-                res += f"- Cut **{cat['category']}** by ~{c}{rec_cut:,.0f}\n"
+            res += f"- Shortfall to Target: **{c}{deficit:,.2f}**\n"
+            res += f"- Identified Discretionary Outflow: **{c}{disc_spending:,.2f}**\n\n"
+            res += f"**[PROJECTED ESTIMATE - Required Cut]**\n"
+            res += f"Trim non-essential expenses (Shopping, Dining, Entertainment) by ~{c}{deficit:,.2f} to hit your goal."
         else:
-            res += f"❌ **Not realistically feasible with current income and fixed expenses.**\n\n"
-            res += f"- Target: {c}{target_amt:,.2f}\n"
-            res += f"- Income: {c}{inc:,.2f} | Essential Living Expenses: {c}{context['essential_total']:,.2f}\n"
-            res += f"- Recommendation: Increase income through freelance work or renegotiate fixed costs."
-
+            res += f"❌ **Target requires increasing income or reducing fixed expenses.**\n"
         return res
 
-    # 4. "Identify unnecessary spending" / "Where can I cut costs?"
-    if any(q in p_lower for q in ["unnecessary", "cut cost", "wasteful", "discretionary", "reduce expense", "spend less", "cut spending"]):
+    # 7. "Predict my next month's expenses based on my history."
+    if any(q in p_lower for q in ["predict", "forecast", "projection", "next month's expenses", "future expense"]):
+        res = f"### 📈 Predictive Expense Modeling\n\n"
+        res += f"**[ACTUAL DATA - Current Outflow]**\n"
+        res += f"- Verified Outflow to Date: **{c}{context['current_expense']:,.2f}**\n"
+        res += f"- Daily Burn Rate: **{c}{context['daily_burn_rate']:,.2f}/day**\n\n"
+        res += f"**[PROJECTED ESTIMATE - Algorithmic Forecast]**\n"
+        res += f"- **Estimated Month-End Total Expenses:** ~**{c}{context['projected_monthly_expense']:,.2f}**\n"
+        res += f"- **Projected Next Month Baseline:** ~**{c}{context['projected_monthly_expense']:,.2f}**\n"
+        res += f"*(Estimate assumes normal daily transaction pace without unexpected one-off purchases.)*"
+        return res
+
+    # 8. "Identify unnecessary spending"
+    if any(q in p_lower for q in ["unnecessary", "cut cost", "wasteful", "discretionary", "reduce expense"]):
         disc = [c for c in context["categories"] if c["is_discretionary"]]
         total_disc = context["discretionary_total"]
 
         res = f"### 🔍 Discretionary Spending Audit\n\n"
         res += f"**[ACTUAL DATA - Non-Essential Outflows]**\n"
-        res += f"You have spent a total of **{c}{total_disc:,.2f}** on discretionary categories this month:\n\n"
-
-        potential_monthly_savings = 0.0
+        res += f"Total recorded discretionary spending this month: **{c}{total_disc:,.2f}**\n\n"
         for item in disc:
-            savings_potential = round(item["total"] * 0.30, 2)
-            potential_monthly_savings += savings_potential
-            res += f"- **{item['category']}**: {c}{item['total']:,.2f} (Potential 30% reduction: ~{c}{savings_potential:,.2f})\n"
+            res += f"- **{item['category']}**: {c}{item['total']:,.2f}\n"
 
         res += f"\n**[PROJECTED ESTIMATE - Potential Savings]**\n"
-        res += f"- **Immediate Monthly Savings:** ~**{c}{potential_monthly_savings:,.2f}**\n"
-        res += f"- **Projected Annual Wealth Creation:** ~**{c}{(potential_monthly_savings * 12):,.2f}**\n\n"
-        res += f"💡 **Recommended Actions:**\n"
-        res += f"1. Audit recurring subscriptions (Netflix, gym, cloud) for unused services.\n"
-        res += f"2. Set a weekend dining cap using the FinAI Budgeting tool.\n"
-        res += f"3. Implement a 48-hour cooling rule for non-essential online shopping."
+        res += f"Targeting a 25% reduction in these categories can yield ~**{c}{(total_disc * 0.25):,.2f}** in monthly savings."
         return res
 
-    # 5. "Predict monthly expenses" / "Forecast"
-    if any(q in p_lower for q in ["predict", "forecast", "projection", "estimate", "future expense", "how much will i spend"]):
-        res = f"### 📈 Predictive Expense Forecast for {datetime.now().strftime('%B %Y')}\n\n"
-        res += f"**[ACTUAL DATA - Current Month to Date]**\n"
-        res += f"- Verified Outflow: **{c}{context['current_expense']:,.2f}**\n"
-        res += f"- Current Daily Burn Rate: **{c}{context['daily_burn_rate']:,.2f}/day**\n\n"
-
-        res += f"**[PROJECTED ESTIMATE - Algorithmic Forecast]**\n"
-        res += f"- **Projected Total Month-End Expenses:** **{c}{context['projected_monthly_expense']:,.2f}**\n"
-        res += f"- **Estimated Month-End Net Savings:** **{c}{context['projected_savings']:,.2f}**\n"
-        
-        if context['prev_expense'] > 0:
-            diff = context['projected_monthly_expense'] - context['prev_expense']
-            diff_pct = (diff / context['prev_expense']) * 100
-            dir_str = "higher" if diff > 0 else "lower"
-            res += f"- **Comparison to Last Month:** Projected to be **{abs(diff_pct):.1f}% {dir_str}** than previous month ({c}{context['prev_expense']:,.2f}).\n\n"
-
-        res += f"*(Note: Estimates assume consistent daily expenditure patterns for the remainder of the calendar month.)*"
-        return res
-
-    # 6. Default comprehensive financial summary and recommendations
-    res = f"### 🤖 FinAI Financial Health Analysis\n\n"
-    res += f"Hello {context['user_name']}! Here is an overview of your current financial standing:\n\n"
+    # Default overview
+    res = f"### 🤖 FinAI Financial Copilot\n\n"
+    res += f"Hello {context['user_name']}! Here is your verified financial overview:\n\n"
     res += f"**[ACTUAL DATA]**\n"
-    res += f"- **Total Income:** {c}{context['current_income']:,.2f}\n"
-    res += f"- **Total Expenses:** {c}{context['current_expense']:,.2f}\n"
-    res += f"- **Net Savings:** {c}{context['current_savings']:,.2f} ({context['current_savings_rate']:.1f}% savings rate)\n"
-    if context["categories"]:
-        res += f"- **Top Spending Area:** {context['categories'][0]['category']} ({c}{context['categories'][0]['total']:,.2f})\n"
-
-    res += f"\n**[PROJECTED ESTIMATES]**\n"
-    res += f"- Projected Monthly Total Outflow: ~{c}{context['projected_monthly_expense']:,.2f}\n"
-    res += f"- Projected End-of-Month Reserve: ~{c}{context['projected_savings']:,.2f}\n\n"
-
-    res += f"💬 **Quick questions you can ask me:**\n"
+    res += f"- **Income:** {c}{context['current_income']:,.2f}\n"
+    res += f"- **Expenses:** {c}{context['current_expense']:,.2f}\n"
+    res += f"- **Net Savings:** {c}{context['current_savings']:,.2f}\n\n"
+    res += f"You can ask me questions like:\n"
     res += f"- *\"Where did I spend the most money?\"*\n"
-    res += f"- *\"How much did I save this month?\"*\n"
-    res += f"- *\"Can I save ₹5,000 next month?\"*\n"
-    res += f"- *\"Identify unnecessary spending\"*\n"
-    res += f"- *\"Predict my monthly expenses\"*"
+    res += f"- *\"How much did I spend this month?\"*\n"
+    res += f"- *\"How can I save ₹5,000 next month?\"*\n"
+    res += f"- *\"Am I exceeding my monthly budget?\"*"
     return res
 
 def call_gemini_api(prompt, context):
-    """Calls Gemini API using standard REST endpoint when GEMINI_API_KEY is supplied."""
+    """Calls Gemini API with strict context injection if key is available."""
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
+    if not api_key or not context["has_data"]:
         return None
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    
+
     system_instruction = f"""
-    You are FinAI, an expert senior financial advisor and personal finance assistant.
-    You analyze the user's actual financial data provided in the context below.
+    You are FinAI, an expert financial analyst.
     Rules:
-    1. Base all facts and numbers strictly on the provided financial context.
-    2. ALWAYS clearly distinguish between ACTUAL DATA (verified transactions in database) and PROJECTED ESTIMATES (forecasts or hypothetical goals) by explicitly tagging them e.g. [ACTUAL DATA] and [PROJECTED ESTIMATE].
-    3. User currency is: {context['currency']}.
-    4. Provide actionable, supportive, clear, and realistic advice.
+    1. Base all facts strictly on the provided authenticated user data.
+    2. If user has no transactions, state so and do not invent records.
+    3. Clearly distinguish between [ACTUAL DATA] and [PROJECTED ESTIMATE].
+    4. Currency: {context['currency']}.
     
-    Current User Context:
-    - User Name: {context['user_name']}
-    - Current Month Income: {context['currency']}{context['current_income']}
-    - Current Month Expenses: {context['currency']}{context['current_expense']}
-    - Current Month Net Savings: {context['currency']}{context['current_savings']} (Rate: {context['current_savings_rate']}%)
-    - Discretionary Outflow: {context['currency']}{context['discretionary_total']}
-    - Essential Outflow: {context['currency']}{context['essential_total']}
+    Data:
+    - User: {context['user_name']}
+    - Income: {context['currency']}{context['current_income']}
+    - Expense: {context['currency']}{context['current_expense']}
+    - Savings: {context['currency']}{context['current_savings']}
     - Top Categories: {json.dumps(context['categories'][:5])}
-    - Daily Burn Rate: {context['currency']}{context['daily_burn_rate']:.2f}
-    - Projected Month-End Expenses: {context['currency']}{context['projected_monthly_expense']:.2f}
-    - Active Budgets: {json.dumps(context['budgets'])}
     """
 
     payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": f"Context: {system_instruction}\n\nUser Question: {prompt}"}]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 1000
-        }
+        "contents": [{"role": "user", "parts": [{"text": f"{system_instruction}\n\nQuestion: {prompt}"}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 800}
     }
 
     try:
         resp = requests.post(url, json=payload, timeout=8)
         if resp.status_code == 200:
-            data = resp.json()
-            candidates = data.get("candidates", [])
+            candidates = resp.json().get("candidates", [])
             if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return parts[0].get("text", "")
-    except Exception as e:
-        # Fallback to deterministic engine
-        print(f"Gemini API request error: {e}")
+                return candidates[0]["content"]["parts"][0]["text"]
+    except Exception:
         return None
 
     return None
@@ -381,29 +371,25 @@ def chat():
     if not message:
         return jsonify({"error": "Message cannot be empty"}), 400
 
-    # 1. Fetch live contextual data
     context = fetch_financial_context(user_id)
 
-    # 2. Try Gemini API first if configured; fallback to intelligent deterministic engine
     ai_response = call_gemini_api(message, context)
     mode = "gemini_llm"
     if not ai_response:
         ai_response = generate_heuristic_response(message, context)
         mode = "heuristic_ai"
 
-    # 3. Store messages in database
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO ai_messages (user_id, role, content, metadata_json)
         VALUES (?, 'user', ?, ?)
     """, (user_id, message, json.dumps({"source": "user_input"})))
-    
+
     metadata = {
         "mode": mode,
         "currency": context["currency"],
-        "savings": context["current_savings"],
-        "projected_expense": round(context["projected_monthly_expense"], 2)
+        "savings": context["current_savings"]
     }
     cursor.execute("""
         INSERT INTO ai_messages (user_id, role, content, metadata_json)

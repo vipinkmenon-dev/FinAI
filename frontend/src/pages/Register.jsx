@@ -1,23 +1,45 @@
 import React, { useState } from 'react';
-import { Sparkles, Lock, Mail, User, ArrowRight, AlertCircle } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Eye, EyeOff, Lock, Mail, User, ArrowRight, AlertCircle, CheckCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const CURRENCIES = [
-  { symbol: '₹', name: '₹ Indian Rupee (INR)' },
-  { symbol: '$', name: '$ US Dollar (USD)' },
-  { symbol: '€', name: '€ Euro (EUR)' },
-  { symbol: '£', name: '£ British Pound (GBP)' },
-  { symbol: '¥', name: '¥ Japanese Yen (JPY)' }
-];
-
-export const Register = ({ onSwitchToLogin }) => {
+export const Register = () => {
   const { register } = useAuth();
+  const navigate = useNavigate();
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [currency, setCurrency] = useState('₹');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [agreeTerms, setAgreeTerms] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Compute password strength score (0-4)
+  const calculateStrength = (pass) => {
+    let score = 0;
+    if (!pass) return { score: 0, label: 'Too short', color: 'bg-neutral-200' };
+    if (pass.length >= 6) score += 1;
+    if (pass.length >= 8) score += 1;
+    if (/[A-Z]/.test(pass) && /[a-z]/.test(pass)) score += 1;
+    if (/[0-9]/.test(pass) || /[^A-Za-z0-9]/.test(pass)) score += 1;
+
+    switch (score) {
+      case 1:
+        return { score: 1, label: 'Weak', color: 'bg-neutral-400' };
+      case 2:
+        return { score: 2, label: 'Fair', color: 'bg-neutral-600' };
+      case 3:
+        return { score: 3, label: 'Good', color: 'bg-neutral-800' };
+      case 4:
+        return { score: 4, label: 'Strong', color: 'bg-black' };
+      default:
+        return { score: 0, label: 'Too short', color: 'bg-neutral-200' };
+    }
+  };
+
+  const strength = calculateStrength(password);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,143 +50,173 @@ export const Register = ({ onSwitchToLogin }) => {
       return;
     }
 
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    if (!agreeTerms) {
+      setError('You must accept the terms & conditions to continue.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await register(email, password, fullName, currency);
+      await register(email, password, fullName, '₹');
+      navigate('/dashboard');
     } catch (err) {
-      setError(err.message || 'Registration failed.');
+      setError(err.message || 'Registration failed. Please check inputs.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleFillDemoValues = () => {
-    const randomSuffix = Math.floor(100 + Math.random() * 900);
-    setFullName('Alex Finance Lead');
-    setEmail(`alex.finai${randomSuffix}@gmail.com`);
-    setPassword('finance2026');
-    setCurrency('₹');
-  };
-
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-navy-950 relative overflow-hidden">
-      <div className="absolute -top-32 -right-32 w-96 h-96 bg-brand-600/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -left-32 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-
-      <div className="relative z-10 w-full max-w-md p-8 rounded-3xl bg-navy-900/90 backdrop-blur-xl border border-slate-800 shadow-2xl">
-        <div className="flex flex-col items-center text-center mb-6">
-          <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-600 shadow-lg shadow-brand-500/30 mb-4">
-            <Sparkles className="w-8 h-8 text-white" />
-          </div>
-          <h2 className="text-2xl font-black tracking-tight text-white">Join FinAI</h2>
-          <p className="text-xs text-brand-300 font-semibold mt-1">AI-Powered Personal Finance Tracker</p>
-          <p className="text-xs text-slate-400 mt-1">Automatic sample ledger data will be created for immediate testing</p>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-50 text-neutral-900">
+      <div className="w-full max-w-md p-8 sm:p-10 rounded-2xl bg-white border border-neutral-200 shadow-card space-y-6">
+        {/* Brand Header */}
+        <div className="text-center space-y-2">
+          <Link to="/" className="inline-flex items-center gap-2 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-black text-white flex items-center justify-center font-black text-xl">
+              F
+            </div>
+          </Link>
+          <h2 className="text-2xl font-bold tracking-tight text-neutral-950">
+            Create an Account
+          </h2>
+          <p className="text-xs text-neutral-500">
+            Start with an independent, clean personal finance ledger
+          </p>
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 p-3.5 mb-5 rounded-xl text-xs font-semibold text-rose-300 bg-rose-950/40 border border-rose-500/40">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <div className="flex items-center gap-2 p-3 text-xs font-semibold text-neutral-900 bg-neutral-100 border border-neutral-300 rounded-lg">
+            <AlertCircle className="w-4 h-4 shrink-0 text-neutral-800" />
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-3.5">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1">
               Full Name
             </label>
             <div className="relative">
-              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
               <input
                 type="text"
                 required
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="e.g. Alex Sharma"
-                className="w-full pl-10 pr-4 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:border-brand-500"
+                placeholder="e.g. Vipin Kumar"
+                className="w-full pl-10 pr-4 py-2 bg-white border border-neutral-300 rounded-lg text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1">
               Email Address
             </label>
             <div className="relative">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="alex@finai.io"
-                className="w-full pl-10 pr-4 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:border-brand-500"
+                placeholder="name@example.com"
+                className="w-full pl-10 pr-4 py-2 bg-white border border-neutral-300 rounded-lg text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1">
               Password
             </label>
             <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 minLength={6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Minimum 6 characters"
-                className="w-full pl-10 pr-4 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:border-brand-500"
+                className="w-full pl-10 pr-10 py-2 bg-white border border-neutral-300 rounded-lg text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Password Strength Indicator */}
+            {password && (
+              <div className="mt-2 space-y-1">
+                <div className="flex gap-1 h-1.5 w-full bg-neutral-100 rounded-full overflow-hidden">
+                  <div className={`h-full transition-all duration-300 ${strength.color}`} style={{ width: `${(strength.score / 4) * 100}%` }} />
+                </div>
+                <div className="flex justify-between text-[10px] text-neutral-500">
+                  <span>Strength: <strong className="text-neutral-900">{strength.label}</strong></span>
+                  <span>Min 6 characters</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1">
+              Confirm Password
+            </label>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                minLength={6}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your password"
+                className="w-full pl-10 pr-4 py-2 bg-white border border-neutral-300 rounded-lg text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
               />
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-              Preferred Currency
+          {/* Terms and conditions checkbox */}
+          <div className="flex items-start gap-2 pt-1.5">
+            <input
+              type="checkbox"
+              id="terms"
+              required
+              checked={agreeTerms}
+              onChange={(e) => setAgreeTerms(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded border-neutral-300 text-black focus:ring-black accent-black"
+            />
+            <label htmlFor="terms" className="text-xs text-neutral-600 leading-snug cursor-pointer">
+              I agree to the <span className="text-black font-semibold">Terms of Service</span> and understand that my financial data will be strictly isolated.
             </label>
-            <select
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-navy-950 border border-slate-700/80 rounded-xl text-white text-sm focus:outline-none focus:border-brand-500"
-            >
-              {CURRENCIES.map((c) => (
-                <option key={c.symbol} value={c.symbol}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="flex items-center justify-center gap-2 w-full py-3 mt-4 text-sm font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-brand-500/25 transition-all disabled:opacity-50"
+            className="w-full py-3 text-sm font-bold bg-black text-white rounded-lg hover:bg-neutral-800 transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-3"
           >
-            <span>{loading ? 'Setting up ledger...' : 'Create Account & Seed Data'}</span>
+            <span>{loading ? 'Setting up account...' : 'Create Account'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
 
-        <div className="mt-4 pt-4 border-t border-slate-800 text-center space-y-2">
-          <button
-            type="button"
-            onClick={handleFillDemoValues}
-            className="text-xs text-brand-400 hover:underline"
-          >
-            ⚡ Auto-fill sample credentials
-          </button>
-          <div>
-            <span className="text-xs text-slate-400">Already registered? </span>
-            <button
-              onClick={onSwitchToLogin}
-              className="text-xs font-semibold text-white hover:underline ml-1"
-            >
-              Sign In
-            </button>
-          </div>
+        <div className="pt-4 border-t border-neutral-200 text-center text-xs text-neutral-500">
+          Already registered?{' '}
+          <Link to="/login" className="font-bold text-black hover:underline ml-1">
+            Sign In
+          </Link>
         </div>
       </div>
     </div>
